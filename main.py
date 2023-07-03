@@ -9,18 +9,18 @@ REPO_API = "https://api.github.com/user/repos"
 CREATE_FILE_API = "https://api.github.com/repos/{}/{}/contents/{}"
 
 # GitHub personal access token with repo scope
-ACCESS_TOKEN = "Your token goes here"
+ACCESS_TOKEN = "FILL ME"
 
 # OX Security yml file contents
 FILE_CONTENT = """name: Example workflow with OX Security Scan
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     types: [opened, reopened, synchronize]
     branches:
-      - main
+      - master
 jobs:
   security:
     runs-on: ubuntu-latest
@@ -28,8 +28,52 @@ jobs:
       - name: Run OX Security Scan to check for vulnerabilities
         with:
           ox_api_key: ${{ secrets.OX_API_KEY }}
-          ox_host_url: https://your-on-prem-server.ox.security
+          ox_host_url: FILL ME
         uses: oxsecurity/ox-security-scan@main"""
+
+
+def fetch_username():
+    headers = {"Authorization": f"token {ACCESS_TOKEN}"}
+    url = f"https://api.github.com/user"
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        print(f"Found user information")
+        return response.json()
+    else:
+        print(f"Error getting user information: {response.status_code}")
+        return {}
+
+
+def fetch_all_orgs():
+    headers = {"Authorization": f"token {ACCESS_TOKEN}"}
+    url = f"https://api.github.com/user/orgs"
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        print(f"Found organization for the user")
+        return response.json()
+    else:
+        print(f"Error: {response.status_code}")
+        return []
+
+
+def fetch_org_repos(user):
+    repos = []
+    page = 1
+    per_page = 100
+    headers = {"Authorization": f"token {ACCESS_TOKEN}"}
+    url = f"https://api.github.com/users/{user}/repos?page={page}&per_page={per_page}"
+    while True:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            repos.extend(response.json())
+            if len(response.json()) < per_page:
+                break
+            page += 1
+            url = f"{REPO_API}?page={page}&per_page={per_page}"
+        else:
+            print(f"Error: {response.status_code}")
+            break
+    return repos
 
 
 # Fetch all repositories using the GitHub API
@@ -64,7 +108,7 @@ def create_file_in_repos(repos):
         if not repo["private"] == True:
             continue
 
-        file_name = f"ox-pipeline-scanner.yml"
+        file_name = f"build.yml"
         file_path = f".github/workflows/{file_name}"
         file_content = base64.b64encode(FILE_CONTENT.encode("utf-8")).decode("utf-8")
         payload = {
@@ -115,6 +159,8 @@ def update_file(owner, repo_name, file_name, new_content):
     )
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
 
+    # create random number
+
     response = requests.put(url, headers=headers, json=new_content)
     if response.status_code == 200:
         print("File updated successfully.")
@@ -124,7 +170,16 @@ def update_file(owner, repo_name, file_name, new_content):
 
 # Main program
 def main():
-    # Fetch repositories
+    # Fetch organizations
+    orgs = fetch_all_orgs()
+
+    if orgs:
+        for org in orgs:
+            org_repos = fetch_org_repos(org["login"])
+            if org_repos:
+                create_file_in_repos(org_repos)
+
+    # Fetch user's repositories
     repos = fetch_all_repos()
     if repos:
         # Create a file in each repository
