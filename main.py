@@ -9,7 +9,7 @@ REPO_API = "https://api.github.com/user/repos"
 CREATE_FILE_API = "https://api.github.com/repos/{}/{}/contents/{}"
 
 # GitHub personal access token with repo scope
-ACCESS_TOKEN = "FILL ME"
+ACCESS_TOKEN = "Fill ME"
 
 # OX Security yml file contents
 FILE_CONTENT = """name: Example workflow with OX Security Scan
@@ -28,8 +28,16 @@ jobs:
       - name: Run OX Security Scan to check for vulnerabilities
         with:
           ox_api_key: ${{ secrets.OX_API_KEY }}
-          ox_host_url: FILL ME
+          ox_host_url: https://FILL ME
         uses: oxsecurity/ox-security-scan@main"""
+
+
+def run_operation(prompt):
+    answer = input(prompt)
+    if answer == "y":
+        return True
+    else:
+        return False
 
 
 def fetch_username():
@@ -37,7 +45,6 @@ def fetch_username():
     url = f"https://api.github.com/user"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
-        print(f"Found user information")
         return response.json()
     else:
         print(f"Error getting user information: {response.status_code}")
@@ -49,7 +56,6 @@ def fetch_all_orgs():
     url = f"https://api.github.com/user/orgs"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
-        print(f"Found organization for the user")
         return response.json()
     else:
         print(f"Error: {response.status_code}")
@@ -100,7 +106,14 @@ def fetch_all_repos():
 # Create a new file with today's date in each repository
 def create_file_in_repos(repos):
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
+    should_run_everytime = False
+
     for repo in repos:
+        if not should_run_everytime:
+            should_run_everytime = run_operation(
+                f"Do you want to continue for rest of the repositories automatically, or check the changes for {repo['name']} first? (y - continue/n - check changes first): "
+            )
+
         owner = repo["owner"]["login"]
         repo_name = repo["name"]
 
@@ -170,6 +183,8 @@ def update_file(owner, repo_name, file_name, new_content):
 
 # Main program
 def main():
+    print("OX Pipeline updater v1.0")
+
     # Fetch organizations
     orgs = fetch_all_orgs()
 
