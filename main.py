@@ -83,22 +83,22 @@ def fetch_org_repos(user):
 
 
 # Fetch all repositories using the GitHub API
-def fetch_all_repos():
+def fetch_org_repos(org):
     repos = []
     page = 1
     per_page = 100
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
-    url = f"{REPO_API}?page={page}&per_page={per_page}"
     while True:
+        url = f"https://api.github.com/orgs/{org}/repos?page={page}&per_page={per_page}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            repos.extend(response.json())
-            if len(response.json()) < per_page:
-                break
+            current_batch = response.json()
+            repos.extend(current_batch)
+            if len(current_batch) < per_page:
+                break  # Exit loop if we've fetched all repositories
             page += 1
-            url = f"{REPO_API}?page={page}&per_page={per_page}"
         else:
-            print(f"Error: {response.status_code}")
+            print(f"Error fetching repositories for organization {org}: {response.status_code}")
             break
     return repos
 
