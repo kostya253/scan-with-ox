@@ -1,14 +1,16 @@
 import requests
 import base64
+import argparse
 from datetime import datetime
 
-# GitHub API endpoint for fetching repositories
-REPO_API = "https://api.github.com/user/repos"
+# GitHub API base URL
+GITHUB_API_BASE = "api.github.com"  # Default value
 
-# GitHub API endpoint for creating a file
-CREATE_FILE_API = "https://api.github.com/repos/{}/{}/contents/{}"
+# GitHub API endpoints - will be configured based on base URL
+REPO_API = None
+CREATE_FILE_API = None
 
-# GitHub personal access token with repo scope
+# GitHub access token
 ACCESS_TOKEN = "Fill ME"
 
 # OX Security yml file contents
@@ -16,11 +18,11 @@ FILE_CONTENT = """name: Example workflow with OX Security Scan
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     types: [opened, reopened, synchronize]
     branches:
-      - master
+      - main
 jobs:
   security:
     runs-on: ubuntu-latest
@@ -28,8 +30,25 @@ jobs:
       - name: Run OX Security Scan to check for vulnerabilities
         with:
           ox_api_key: ${{ secrets.OX_API_KEY }}
-          ox_host_url: https://FILL ME
+          ox_host_url: https://Fill ME
         uses: oxsecurity/ox-security-scan@main"""
+
+
+def configure_github_api(base_url=None):
+    """Configure the GitHub API base URL and update endpoints accordingly."""
+    global GITHUB_API_BASE, REPO_API, CREATE_FILE_API
+    
+    if base_url:
+        GITHUB_API_BASE = base_url.rstrip('/')  # Remove trailing slash if present
+    
+    # Update the API endpoints with the configured base URL
+    REPO_API = f"https://{GITHUB_API_BASE}/user/repos"
+    CREATE_FILE_API = f"https://{GITHUB_API_BASE}/repos/{{0}}/{{1}}/contents/{{2}}"
+
+    # review above
+    print("github_api_base:", GITHUB_API_BASE)
+    print("repo_api:", REPO_API)
+    print("create_file_api:", CREATE_FILE_API)
 
 
 def run_operation(prompt):
@@ -42,7 +61,7 @@ def run_operation(prompt):
 
 def fetch_username():
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
-    url = f"https://api.github.com/user"
+    url = f"https://{GITHUB_API_BASE}/user"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         return response.json()
@@ -53,7 +72,7 @@ def fetch_username():
 
 def fetch_all_orgs():
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
-    url = f"https://api.github.com/user/orgs"
+    url = f"https://{GITHUB_API_BASE}/user/orgs"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         return response.json()
@@ -62,34 +81,33 @@ def fetch_all_orgs():
         return []
 
 
-def fetch_org_repos(user):
+def fetch_user_repos():
     repos = []
     page = 1
     per_page = 100
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
-    url = f"https://api.github.com/users/{user}/repos?page={page}&per_page={per_page}"
     while True:
+        url = f"https://{GITHUB_API_BASE}/user/repos?page={page}&per_page={per_page}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            repos.extend(response.json())
-            if len(response.json()) < per_page:
+            current_batch = response.json()
+            repos.extend(current_batch)
+            if len(current_batch) < per_page:
                 break
             page += 1
-            url = f"{REPO_API}?page={page}&per_page={per_page}"
         else:
             print(f"Error: {response.status_code}")
             break
     return repos
 
 
-# Fetch all repositories using the GitHub API
 def fetch_org_repos(org):
     repos = []
     page = 1
     per_page = 100
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
     while True:
-        url = f"https://api.github.com/orgs/{org}/repos?page={page}&per_page={per_page}"
+        url = f"https://{GITHUB_API_BASE}/orgs/{org}/repos?page={page}&per_page={per_page}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             current_batch = response.json()
@@ -103,10 +121,12 @@ def fetch_org_repos(org):
     return repos
 
 
-# Create a new file with today's date in each repository
 def create_file_in_repos(repos):
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
     should_run_everytime = False
+
+    # review repos
+    print("private repositories:", [repo['name'] for repo in repos if repo['private'] == True])
 
     for repo in repos:
         if not should_run_everytime:
@@ -118,46 +138,47 @@ def create_file_in_repos(repos):
         repo_name = repo["name"]
 
         # Skip public repos
-        if not repo["private"] == True:
+        if repo["private"] == False:
             continue
 
-        file_name = f"build.yml"
+        file_name = f"ox-scan.yml"
         file_path = f".github/workflows/{file_name}"
         file_content = base64.b64encode(FILE_CONTENT.encode("utf-8")).decode("utf-8")
         payload = {
             "message": f"Add new file: {file_name}",
             "content": file_content,
-            "branch": "master",
+            "branch": "main",
         }
+        
+        url = CREATE_FILE_API.format(owner, repo_name, file_path)
         response = requests.put(
-            CREATE_FILE_API.format(owner, repo_name, file_path),
+            url,
             headers=headers,
             json=payload,
         )
+        
         if response.status_code == 201:
-            print(f"File created in {repo_name} repository")
+            print(f"File {file_name} created in {repo_name} repository")
         elif response.status_code == 422:
             print(
-                f"ox-pipeline-scanner.yml is already created in {repo_name}, updating..."
+                f"{file_name} is already present in the {repo_name} repo, updating..."
             )
 
             payload = {
                 "message": f"Update file: {file_name}",
                 "content": file_content,
-                "branch": "master",
+                "branch": "main",
                 "sha": get_file_hash(owner, repo_name, file_path),
             }
 
             update_file(owner, repo_name, file_path, payload)
         else:
-            print(f"Failed to create file in {repo_name} repository: {response.text}")
+            print(f"Failed to create file {file_name} in {repo_name} repository: {response.text}")
 
 
 def get_file_hash(owner, repo_name, file_name):
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
-    url = "https://api.github.com/repos/{}/{}/contents/{}".format(
-        owner, repo_name, file_name
-    )
+    url = f"https://{GITHUB_API_BASE}/repos/{owner}/{repo_name}/contents/{file_name}"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         file_hash = response.json()["sha"]
@@ -167,39 +188,45 @@ def get_file_hash(owner, repo_name, file_name):
 
 
 def update_file(owner, repo_name, file_name, new_content):
-    url = "https://api.github.com/repos/{}/{}/contents/{}".format(
-        owner, repo_name, file_name
-    )
+    url = f"https://{GITHUB_API_BASE}/repos/{owner}/{repo_name}/contents/{file_name}"
     headers = {"Authorization": f"token {ACCESS_TOKEN}"}
-
-    # create random number
 
     response = requests.put(url, headers=headers, json=new_content)
     if response.status_code == 200:
-        print("File updated successfully.")
+        print(f"File {file_name} updated successfully.")
     else:
-        print("Error updating file.")
+        print(f"Error updating file {file_name}.")
 
 
-# Main program
-def main():
+def main(github_api_base=None):
     print("OX Pipeline updater v1.0")
-
+    
+    # Configure GitHub API with custom base URL if provided
+    configure_github_api(github_api_base)
+    
     # Fetch organizations
     orgs = fetch_all_orgs()
-
+    
     if orgs:
         for org in orgs:
             org_repos = fetch_org_repos(org["login"])
             if org_repos:
+                print("Processing org repos...")
                 create_file_in_repos(org_repos)
 
     # Fetch user's repositories
-    repos = fetch_all_repos()
+    repos = fetch_user_repos()
     if repos:
         # Create a file in each repository
+        print("Processing user repos...")
         create_file_in_repos(repos)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='OX Pipeline updater')
+    parser.add_argument('--github-api', 
+                      help='GitHub API base URL (default: api.github.com)',
+                      default=None)
+    
+    args = parser.parse_args()
+    main(args.github_api)
